@@ -3,6 +3,7 @@ from __future__ import annotations
 from dashboard.quant_engine import (
     INDIAN_DEFAULT_UNIVERSE,
     IndianEquityMomentumModel,
+    ProfitProtectionConfig,
     RiskConfig,
     StrategyConfig,
     YahooIndianDataProvider,
@@ -29,7 +30,8 @@ def run_backtest(
         StrategyConfig(short_window=short_window, long_window=long_window),
         RiskConfig(),
     )
-    backtest = model.backtest(market_data)
+    protection = model.profit_protection_report(market_data, ProfitProtectionConfig())
+    backtest = protection["backtest"]
     if "error" in backtest:
         return backtest
 
@@ -41,6 +43,7 @@ def run_backtest(
         "end_date": end_date or "latest available",
         "strategy": f"{short_window}/{long_window} volatility-adjusted trend model",
         "backtest": backtest,
+        "profit_gate": protection,
         "signals": [signal.__dict__ for signal in signals],
-        "disclaimer": "Research and automation scaffold only; profits are not guaranteed and live trading needs broker/SEBI compliance.",
+        "disclaimer": "Research and automation scaffold only; profits are not guaranteed. Groww/Zerodha live trading requires explicit CLI opt-in, credentials, and broker/SEBI compliance.",
     }

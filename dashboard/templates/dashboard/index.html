@@ -51,6 +51,10 @@
         <div class="alert alert-danger">{{ results.error }}</div>
     {% elif results %}
         <div class="alert alert-info">{{ results.disclaimer }}</div>
+        <div class="alert {% if results.profit_gate.approved %}alert-success{% else %}alert-warning{% endif %}">
+            <strong>Profit-protection gate:</strong> {% if results.profit_gate.approved %}Passed{% else %}Blocked for live trading{% endif %}.
+            {% for reason in results.profit_gate.reasons %}<span>{{ reason }}</span>{% if not forloop.last %}; {% endif %}{% endfor %}
+        </div>
         <div class="row">
             <div class="col-md-3"><div class="card"><div class="card-body"><div class="muted">Ending Equity</div><div class="metric">₹{{ results.backtest.ending_equity|floatformat:0 }}</div></div></div></div>
             <div class="col-md-3"><div class="card"><div class="card-body"><div class="muted">Total Return</div><div class="metric {% if results.backtest.total_return_pct >= 0 %}good{% else %}bad{% endif %}">{{ results.backtest.total_return_pct|floatformat:2 }}%</div></div></div></div>
@@ -89,7 +93,8 @@
                     <div class="card-body">
                         <ul>
                             <li>Paper trading: <code>python quant_model.py --paper</code></li>
-                            <li>Live trading requires explicit <code>--live</code>, Zerodha Kite credentials, and regulatory/broker approval.</li>
+                            <li>Groww live trading: set <code>GROWW_ACCESS_TOKEN</code> or <code>GROWW_API_KEY</code>/<code>GROWW_API_SECRET</code>, then run <code>python quant_model.py --live --broker groww</code>.</li>
+                            <li>Live trading is blocked unless the profit-protection gate passes; this reduces risk but cannot guarantee profit.</li>
                             <li>Risk caps: max 5 positions, 1% capital risk per trade, 20% max position size.</li>
                             <li>Costs include brokerage and slippage assumptions.</li>
                         </ul>
