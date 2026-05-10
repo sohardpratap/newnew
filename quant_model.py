@@ -1,60 +1,61 @@
-import yfinance as yf
-import pandas as pd
-import numpy as np
+from __future__ import annotations
 
-def run_backtest(ticker="SPY", start_date="2020-01-01", end_date=None, short_window=50, long_window=200):
-    print(f"Downloading data for {ticker}...")
-    data = yf.download(ticker, start=start_date, end=end_date)
+import argparse
+import os
 
-    if data.empty:
-        print("No data retrieved.")
-        return None
+from dashboard.quant_engine import (
+    INDIAN_DEFAULT_UNIVERSE,
+    AutoTrader,
+    IndianEquityMomentumModel,
+    KiteBroker,
+    PaperBroker,
+    RiskConfig,
+    StrategyConfig,
+    YahooIndianDataProvider,
+)
 
-    print(f"Calculating {short_window}-day and {long_window}-day moving averages...")
 
-    # Check if 'Close' is multi-index (often the case with newer yfinance versions)
-    if isinstance(data.columns, pd.MultiIndex):
-        # Flatten columns or get specifically the ticker's close
-        close_prices = data[('Close', ticker)]
-    else:
-        close_prices = data['Close']
+def parse_universe(value: str) -> list[str]:
+    if value.lower() == "nifty-core":
+        return list(INDIAN_DEFAULT_UNIVERSE)
+    return [item.strip().upper() for item in value.split(",") if item.strip()]
 
-    df = pd.DataFrame(index=data.index)
-    df['Close'] = close_prices
-    df['Short_MA'] = df['Close'].rolling(window=short_window, min_periods=1).mean()
-    df['Long_MA'] = df['Close'].rolling(window=long_window, min_periods=1).mean()
 
-    # Strategy: Buy when Short_MA > Long_MA (Signal = 1)
-    # Sell / Go flat when Short_MA < Long_MA (Signal = 0)
-    df['Signal'] = 0
-    df.loc[df['Short_MA'] > df['Long_MA'], 'Signal'] = 1
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Indian-market quant model with paper/live execution controls.")
+    parser.add_argument("--universe", default="nifty-core", help="Comma-separated Yahoo NSE symbols or 'nifty-core'.")
+    parser.add_argument("--start", default="2020-01-01")
+    parser.add_argument("--short-window", type=int, default=20)
+    parser.add_argument("--long-window", type=int, default=100)
+    parser.add_argument("--capital", type=float, default=1_000_000)
+    parser.add_argument("--paper", action="store_true", help="Write simulated orders to paper_orders.csv.")
+    parser.add_argument("--live", action="store_true", help="Send real CNC market orders through Zerodha Kite.")
+    args = parser.parse_args()
 
-    # Daily returns
-    df['Returns'] = df['Close'].pct_change()
+    tickers = parse_universe(args.universe)
+    provider = YahooIndianDataProvider()
+    market_data = provider.download(tickers, start=args.start)
+    model = IndianEquityMomentumModel(
+        StrategyConfig(short_window=args.short_window, long_window=args.long_window),
+        RiskConfig(initial_capital=args.capital),
+    )
 
-    # Strategy returns (shifted by 1 to avoid lookahead bias: signal generated today affects tomorrow's return)
-    df['Strategy_Returns'] = df['Returns'] * df['Signal'].shift(1)
+    print("Backtest")
+    print(model.backtest(market_data))
+    print("\nLatest ranked signals")
+    for signal in model.rank_signals(market_data, capital=args.capital):
+        print(signal)
 
-    # Cumulative returns
-    df['Cumulative_Market'] = (1 + df['Returns'].fillna(0)).cumprod()
-    df['Cumulative_Strategy'] = (1 + df['Strategy_Returns'].fillna(0)).cumprod()
+    if args.paper or args.live:
+        if args.live:
+            broker = KiteBroker(os.environ["KITE_API_KEY"], os.environ["KITE_ACCESS_TOKEN"])
+        else:
+            broker = PaperBroker()
+        orders = AutoTrader(model, broker).run_once(market_data)
+        print("\nOrders")
+        for order in orders:
+            print(order)
 
-    # Summary
-    total_market_return = (df['Cumulative_Market'].iloc[-1] - 1) * 100
-    total_strategy_return = (df['Cumulative_Strategy'].iloc[-1] - 1) * 100
-
-    print("\n--- Backtest Summary ---")
-    print(f"Ticker: {ticker}")
-    print(f"Period: {df.index[0].date()} to {df.index[-1].date()}")
-    print(f"Buy & Hold Return: {total_market_return:.2f}%")
-    print(f"Strategy Return:   {total_strategy_return:.2f}%")
-
-    if total_strategy_return > total_market_return:
-        print("Result: Strategy outperformed the market.")
-    else:
-        print("Result: Strategy underperformed the market.")
-
-    return df
 
 if __name__ == "__main__":
-    run_backtest(ticker="SPY", start_date="2020-01-01")
+    main()

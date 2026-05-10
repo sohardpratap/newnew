@@ -1,0 +1,4 @@
+Django>=5.0,<7.0
+numpy>=1.26
+pandas>=2.1
+yfinance>=0.2
