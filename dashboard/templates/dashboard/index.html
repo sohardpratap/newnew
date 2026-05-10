@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quant Fund Dashboard</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { padding-top: 2rem; background-color: #f8f9fa; }
+        .card { margin-bottom: 2rem; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        .performance-positive { color: #198754; font-weight: bold; }
+        .performance-negative { color: #dc3545; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1 class="mb-4">Indian Quant Fund Dashboard</h1>
+
+    <div class="card">
+        <div class="card-body">
+            <form method="get" class="row g-3 align-items-center">
+                <div class="col-auto">
+                    <label for="ticker" class="col-form-label">Ticker Symbol (e.g., RELIANCE.NS, ^NSEI):</label>
+                </div>
+                <div class="col-auto">
+                    <input type="text" id="ticker" name="ticker" class="form-control" value="{{ results.ticker|default:'RELIANCE.NS' }}">
+                </div>
+                <div class="col-auto">
+                    <button type="submit" class="btn btn-primary">Run Backtest</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    {% if results.error %}
+        <div class="alert alert-danger">{{ results.error }}</div>
+    {% elif results %}
+        <div class="row">
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header bg-dark text-white">Backtest Summary: {{ results.ticker }}</div>
+                    <div class="card-body">
+                        <p><strong>Period:</strong> {{ results.start_date }} to {{ results.end_date }}</p>
+                        <p><strong>Buy & Hold Return:</strong> {{ results.market_return }}%</p>
+                        <p><strong>Strategy Return:</strong> {{ results.strategy_return }}%</p>
+                        <p><strong>Performance:</strong>
+                            <span class="{% if results.strategy_return > results.market_return %}performance-positive{% else %}performance-negative{% endif %}">
+                                {{ results.performance }}
+                            </span>
+                        </p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header bg-secondary text-white">Strategy Info</div>
+                    <div class="card-body">
+                        <p>This model uses a classic trend-following strategy:</p>
+                        <ul>
+                            <li><strong>Short MA:</strong> 50 Days</li>
+                            <li><strong>Long MA:</strong> 200 Days</li>
+                            <li><strong>Signal:</strong> Buy when 50 MA > 200 MA. Sell/Flat when 50 MA < 200 MA.</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header bg-primary text-white">Recent Signals (Last 10 Days)</div>
+            <div class="card-body p-0">
+                <table class="table table-striped table-hover mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Date</th>
+                            <th>Close Price</th>
+                            <th>50-Day MA</th>
+                            <th>200-Day MA</th>
+                            <th>Current Signal</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in results.tail_records %}
+                        <tr>
+                            <td>{{ row.date }}</td>
+                            <td>{{ row.close }}</td>
+                            <td>{{ row.short_ma }}</td>
+                            <td>{{ row.long_ma }}</td>
+                            <td><span class="badge {% if row.signal == 'Buy' %}bg-success{% else %}bg-warning text-dark{% endif %}">{{ row.signal }}</span></td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    {% endif %}
+</div>
+
+</body>
+</html>
