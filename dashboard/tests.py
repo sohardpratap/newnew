@@ -32,6 +32,7 @@ def synthetic_prices(days=260):
 class FakeGrowwAPI:
     VALIDITY_DAY = "DAY"
     EXCHANGE_NSE = "NSE"
+    EXCHANGE_BSE = "BSE"
     SEGMENT_CASH = "CASH"
     PRODUCT_CNC = "CNC"
     ORDER_TYPE_MARKET = "MARKET"
@@ -39,8 +40,9 @@ class FakeGrowwAPI:
     TRANSACTION_TYPE_SELL = "SELL"
 
     @staticmethod
-    def get_access_token(api_key, secret):
-        return f"token-{api_key}-{secret}"
+    def get_access_token(api_key, secret=None, totp=None):
+        credential = secret if secret is not None else totp
+        return f"token-{api_key}-{credential}"
 
     def __init__(self, access_token):
         self.access_token = access_token
@@ -128,3 +130,26 @@ class QuantEngineTests(SimpleTestCase):
         self.assertEqual(broker.groww.access_token, "token-key-secret")
         self.assertEqual(broker.groww.orders[0]["trading_symbol"], "RELIANCE")
         self.assertEqual(broker.groww.orders[0]["product"], "CNC")
+        self.assertEqual(broker.groww.orders[0]["exchange"], "NSE")
+        self.assertTrue(broker.groww.orders[0]["order_reference_id"].startswith("QM-"))
+
+    def test_groww_broker_supports_totp_flow(self):
+        with patch("dashboard.quant_engine.find_spec", return_value=True), patch(
+            "dashboard.quant_engine.import_module", return_value=FakeGrowwModule
+        ):
+            broker = GrowwBroker(totp_token="totp-token", totp="123456")
+
+        self.assertEqual(broker.groww.access_token, "token-totp-token-123456")
+
+    def test_groww_broker_routes_bse_cash_order(self):
+        with patch("dashboard.quant_engine.find_spec", return_value=True), patch(
+            "dashboard.quant_engine.import_module", return_value=FakeGrowwModule
+        ):
+            broker = GrowwBroker(access_token="ready-token")
+            broker.place_order(
+                Signal("ABC.BO", "SELL", close=100, score=1, short_ma=1, long_ma=1, volatility=0.1, quantity=1)
+            )
+
+        self.assertEqual(broker.groww.orders[0]["trading_symbol"], "ABC")
+        self.assertEqual(broker.groww.orders[0]["exchange"], "BSE")
+        self.assertEqual(broker.groww.orders[0]["transaction_type"], "SELL")

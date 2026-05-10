@@ -25,7 +25,7 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Groww live trading requires an active Groww Trading API subscription and the official SDK credentials. Keep API keys in environment variables or a secret manager; do not commit them.
+Groww live trading requires a Groww account, Python 3.9+, an active Groww Trading API subscription, and official SDK credentials. Keep API keys/TOTP secrets in environment variables or a secret manager; do not commit them.
 
 ## Dashboard
 
@@ -64,13 +64,23 @@ export GROWW_ACCESS_TOKEN="..."
 python quant_model.py --universe RELIANCE.NS,TCS.NS --live --broker groww
 ```
 
-Or generate an access token from an API key and secret through the Groww SDK flow:
+Or generate an access token from an API key and secret through the Groww SDK flow (Groww documents this as requiring daily approval on the Groww Cloud API Keys page):
 
 ```bash
 export GROWW_API_KEY="..."
 export GROWW_API_SECRET="..."
 python quant_model.py --universe RELIANCE.NS,TCS.NS --live --broker groww
 ```
+
+You can also use Groww's TOTP flow. Store the generated TOTP token and secret, and the app will create the current one-time password with `pyotp`:
+
+```bash
+export GROWW_TOTP_TOKEN="..."
+export GROWW_TOTP_SECRET="..."
+python quant_model.py --universe RELIANCE.NS,TCS.NS --live --broker groww
+```
+
+Groww's documented shared rate limits are: orders 10/sec and 250/min; live data 10/sec and 300/min; non-trading APIs 20/sec and 500/min; live feed up to 1000 subscriptions. The model currently places cash CNC market orders only, with generated `order_reference_id` values for auditability.
 
 Tune the live-order gate if your validated strategy needs different thresholds:
 
