@@ -14,7 +14,7 @@ from importlib import import_module
 from importlib.util import find_spec
 from pathlib import Path
 from time import sleep
-from typing import Any, Iterable
+from typing import Any, Iterable, Protocol
 
 import numpy as np
 import pandas as pd
@@ -61,6 +61,21 @@ class StrategyConfig:
 
 
 @dataclass(frozen=True)
+class ProfitProtectionConfig:
+    """Pre-trade gates that block live orders when recent research is weak.
+
+    These checks cannot guarantee profit. They are deliberately conservative
+    circuit breakers that require a strategy to show positive historical edge,
+    acceptable drawdown, and enough observations before live execution.
+    """
+
+    min_total_return_pct: float = 0.0
+    min_sharpe: float = 0.50
+    max_drawdown_pct: float = 25.0
+    min_trading_days: int = 120
+
+
+@dataclass(frozen=True)
 class Signal:
     ticker: str
     action: str
@@ -83,6 +98,11 @@ class Order:
     status: str
     timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     broker_order_id: str | None = None
+
+
+class Broker(Protocol):
+    def place_order(self, signal: Signal) -> Order:
+        """Submit or record an order for a signal."""
 
 
 class YahooIndianDataProvider:
@@ -158,7 +178,6 @@ class IndianEquityMomentumModel:
         return eligible[: self.risk.max_positions]
 
     def backtest(self, market_data: dict[str, pd.DataFrame]) -> dict[str, Any]:
-        equity = pd.Series(dtype=float)
         returns_by_ticker: dict[str, pd.Series] = {}
         positions_by_ticker: dict[str, pd.Series] = {}
 
@@ -200,6 +219,33 @@ class IndianEquityMomentumModel:
             ],
         }
 
+    def profit_protection_report(
+        self,
+        market_data: dict[str, pd.DataFrame],
+        config: ProfitProtectionConfig | None = None,
+    ) -> dict[str, Any]:
+        config = config or ProfitProtectionConfig()
+        backtest = self.backtest(market_data)
+        if "error" in backtest:
+            return {"approved": False, "reasons": [backtest["error"]], "backtest": backtest}
+
+        reasons: list[str] = []
+        if backtest["total_return_pct"] < config.min_total_return_pct:
+            reasons.append(f"Total return {backtest['total_return_pct']:.2f}% is below {config.min_total_return_pct:.2f}%.")
+        if backtest["sharpe"] < config.min_sharpe:
+            reasons.append(f"Sharpe {backtest['sharpe']:.2f} is below {config.min_sharpe:.2f}.")
+        if abs(backtest["max_drawdown_pct"]) > config.max_drawdown_pct:
+            reasons.append(f"Max drawdown {backtest['max_drawdown_pct']:.2f}% exceeds {config.max_drawdown_pct:.2f}%.")
+        if backtest["trading_days"] < config.min_trading_days:
+            reasons.append(f"Only {backtest['trading_days']} trading days; need at least {config.min_trading_days}.")
+
+        return {
+            "approved": not reasons,
+            "reasons": reasons or ["Backtest passed configured live-trading gates."],
+            "backtest": backtest,
+            "config": config.__dict__,
+        }
+
 
 class PaperBroker:
     def __init__(self, ledger_path: str | Path = "paper_orders.csv"):
@@ -217,7 +263,7 @@ class KiteBroker:
 
     def __init__(self, api_key: str, access_token: str):
         if find_spec("kiteconnect") is None:
-            raise RuntimeError("Install kiteconnect before using --live mode.")
+            raise RuntimeError("Install kiteconnect before using --live mode with Zerodha Kite.")
         kite_module = import_module("kiteconnect")
         self.kite = kite_module.KiteConnect(api_key=api_key)
         self.kite.set_access_token(access_token)
@@ -236,13 +282,66 @@ class KiteBroker:
         return Order(signal.ticker, signal.action, signal.quantity, signal.close, "live", "submitted", broker_order_id=order_id)
 
 
+class GrowwBroker:
+    """Groww Trading API adapter for NSE cash CNC market orders.
+
+    Initialize with an access token from ``GROWW_ACCESS_TOKEN`` or build one from
+    ``GROWW_API_KEY`` and ``GROWW_API_SECRET`` before live trading. The official
+    Groww SDK calls this token ``API_AUTH_TOKEN``.
+    """
+
+    def __init__(self, access_token: str | None = None, api_key: str | None = None, api_secret: str | None = None):
+        if find_spec("growwapi") is None:
+            raise RuntimeError("Install growwapi before using --live mode with Groww.")
+        groww_module = import_module("growwapi")
+        groww_api = groww_module.GrowwAPI
+        token = access_token
+        if token is None:
+            if not api_key or not api_secret:
+                raise RuntimeError("Set GROWW_ACCESS_TOKEN or both GROWW_API_KEY and GROWW_API_SECRET for Groww live trading.")
+            token = groww_api.get_access_token(api_key=api_key, secret=api_secret)
+        self.groww = groww_api(token)
+
+    def place_order(self, signal: Signal) -> Order:
+        trading_symbol = signal.ticker.replace(".NS", "").replace(".BO", "")
+        transaction_type = self.groww.TRANSACTION_TYPE_BUY if signal.action in {"BUY", "HOLD"} else self.groww.TRANSACTION_TYPE_SELL
+        response = self.groww.place_order(
+            trading_symbol=trading_symbol,
+            quantity=signal.quantity,
+            validity=self.groww.VALIDITY_DAY,
+            exchange=self.groww.EXCHANGE_NSE,
+            segment=self.groww.SEGMENT_CASH,
+            product=self.groww.PRODUCT_CNC,
+            order_type=self.groww.ORDER_TYPE_MARKET,
+            transaction_type=transaction_type,
+        )
+        broker_order_id = response.get("groww_order_id") if isinstance(response, dict) else None
+        status = response.get("order_status", "submitted") if isinstance(response, dict) else "submitted"
+        return Order(signal.ticker, "BUY" if signal.action in {"BUY", "HOLD"} else "SELL", signal.quantity, signal.close, "live-groww", status, broker_order_id=broker_order_id)
+
+
 class AutoTrader:
-    def __init__(self, model: IndianEquityMomentumModel, broker: PaperBroker | KiteBroker, max_orders: int = 5):
+    def __init__(
+        self,
+        model: IndianEquityMomentumModel,
+        broker: Broker,
+        max_orders: int = 5,
+        require_profit_gate: bool = False,
+        profit_gate: ProfitProtectionConfig | None = None,
+    ):
         self.model = model
         self.broker = broker
         self.max_orders = max_orders
+        self.require_profit_gate = require_profit_gate
+        self.profit_gate = profit_gate or ProfitProtectionConfig()
 
     def run_once(self, market_data: dict[str, pd.DataFrame]) -> list[Order]:
+        if self.require_profit_gate:
+            report = self.model.profit_protection_report(market_data, self.profit_gate)
+            if not report["approved"]:
+                reasons = "; ".join(report["reasons"])
+                raise RuntimeError(f"Live trading blocked by profit-protection gate: {reasons}")
+
         orders: list[Order] = []
         for signal in self.model.rank_signals(market_data)[: self.max_orders]:
             if signal.action in {"BUY", "SELL"} and signal.quantity > 0:
