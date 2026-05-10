@@ -1,0 +1,4 @@
+yfinance
+pandas
+numpy
+Django>=5.0
