@@ -3,3 +3,4 @@ numpy>=1.26
 pandas>=2.1
 yfinance>=0.2
 growwapi>=0.1
+pyotp>=2.9

@@ -29,6 +29,9 @@ def build_live_broker(name: str):
             access_token=os.environ.get("GROWW_ACCESS_TOKEN"),
             api_key=os.environ.get("GROWW_API_KEY"),
             api_secret=os.environ.get("GROWW_API_SECRET"),
+            totp_token=os.environ.get("GROWW_TOTP_TOKEN"),
+            totp=os.environ.get("GROWW_TOTP"),
+            totp_secret=os.environ.get("GROWW_TOTP_SECRET"),
         )
     if name == "kite":
         return KiteBroker(os.environ["KITE_API_KEY"], os.environ["KITE_ACCESS_TOKEN"])

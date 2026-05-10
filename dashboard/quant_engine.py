@@ -15,6 +15,7 @@ from importlib.util import find_spec
 from pathlib import Path
 from time import sleep
 from typing import Any, Iterable, Protocol
+from uuid import uuid4
 
 import numpy as np
 import pandas as pd
@@ -33,6 +34,14 @@ INDIAN_DEFAULT_UNIVERSE = (
     "BHARTIARTL.NS",
     "ITC.NS",
 )
+
+
+GROWW_RATE_LIMITS = {
+    "orders": {"per_second": 10, "per_minute": 250, "apis": "Create, modify, and cancel orders"},
+    "live_data": {"per_second": 10, "per_minute": 300, "apis": "Market quote, LTP, and OHLC"},
+    "non_trading": {"per_second": 20, "per_minute": 500, "apis": "Order status/list, trades, positions, holdings, margin"},
+    "live_feed": {"subscriptions": 1000, "apis": "WebSocket market/order feeds"},
+}
 
 
 @dataclass(frozen=True)
@@ -283,41 +292,82 @@ class KiteBroker:
 
 
 class GrowwBroker:
-    """Groww Trading API adapter for NSE cash CNC market orders.
+    """Groww Trading API adapter for NSE/BSE cash CNC market orders.
 
-    Initialize with an access token from ``GROWW_ACCESS_TOKEN`` or build one from
-    ``GROWW_API_KEY`` and ``GROWW_API_SECRET`` before live trading. The official
-    Groww SDK calls this token ``API_AUTH_TOKEN``.
+    Supported authentication paths mirror Groww's official SDK docs:
+
+    - ``access_token``: use a pre-generated API auth token.
+    - ``api_key`` + ``api_secret``: API key/secret flow, which Groww documents as
+      requiring daily approval on the Groww Cloud API Keys page.
+    - ``totp_token`` + (``totp`` or ``totp_secret``): TOTP flow. Supplying
+      ``totp_secret`` lets the adapter generate the current TOTP through
+      ``pyotp``.
     """
 
-    def __init__(self, access_token: str | None = None, api_key: str | None = None, api_secret: str | None = None):
+    def __init__(
+        self,
+        access_token: str | None = None,
+        api_key: str | None = None,
+        api_secret: str | None = None,
+        totp_token: str | None = None,
+        totp: str | None = None,
+        totp_secret: str | None = None,
+    ):
         if find_spec("growwapi") is None:
             raise RuntimeError("Install growwapi before using --live mode with Groww.")
         groww_module = import_module("growwapi")
         groww_api = groww_module.GrowwAPI
         token = access_token
         if token is None:
-            if not api_key or not api_secret:
-                raise RuntimeError("Set GROWW_ACCESS_TOKEN or both GROWW_API_KEY and GROWW_API_SECRET for Groww live trading.")
-            token = groww_api.get_access_token(api_key=api_key, secret=api_secret)
+            token = self._build_access_token(groww_api, api_key, api_secret, totp_token, totp, totp_secret)
         self.groww = groww_api(token)
+
+    def _build_access_token(
+        self,
+        groww_api: Any,
+        api_key: str | None,
+        api_secret: str | None,
+        totp_token: str | None,
+        totp: str | None,
+        totp_secret: str | None,
+    ) -> str:
+        if api_key and api_secret:
+            return groww_api.get_access_token(api_key=api_key, secret=api_secret)
+        if totp_token and (totp or totp_secret):
+            current_totp = totp or self._generate_totp(totp_secret)
+            return groww_api.get_access_token(api_key=totp_token, totp=current_totp)
+        raise RuntimeError(
+            "Set GROWW_ACCESS_TOKEN, GROWW_API_KEY/GROWW_API_SECRET, or "
+            "GROWW_TOTP_TOKEN with GROWW_TOTP or GROWW_TOTP_SECRET for Groww live trading."
+        )
+
+    def _generate_totp(self, totp_secret: str | None) -> str:
+        if not totp_secret:
+            raise RuntimeError("Set GROWW_TOTP_SECRET or GROWW_TOTP when using Groww TOTP auth.")
+        if find_spec("pyotp") is None:
+            raise RuntimeError("Install pyotp before using Groww TOTP auth.")
+        pyotp_module = import_module("pyotp")
+        return pyotp_module.TOTP(totp_secret).now()
 
     def place_order(self, signal: Signal) -> Order:
         trading_symbol = signal.ticker.replace(".NS", "").replace(".BO", "")
-        transaction_type = self.groww.TRANSACTION_TYPE_BUY if signal.action in {"BUY", "HOLD"} else self.groww.TRANSACTION_TYPE_SELL
+        exchange = self.groww.EXCHANGE_BSE if signal.ticker.endswith(".BO") else self.groww.EXCHANGE_NSE
+        side = "BUY" if signal.action in {"BUY", "HOLD"} else "SELL"
+        transaction_type = self.groww.TRANSACTION_TYPE_BUY if side == "BUY" else self.groww.TRANSACTION_TYPE_SELL
         response = self.groww.place_order(
             trading_symbol=trading_symbol,
             quantity=signal.quantity,
             validity=self.groww.VALIDITY_DAY,
-            exchange=self.groww.EXCHANGE_NSE,
+            exchange=exchange,
             segment=self.groww.SEGMENT_CASH,
             product=self.groww.PRODUCT_CNC,
             order_type=self.groww.ORDER_TYPE_MARKET,
             transaction_type=transaction_type,
+            order_reference_id=f"QM-{uuid4().hex[:17]}",
         )
         broker_order_id = response.get("groww_order_id") if isinstance(response, dict) else None
         status = response.get("order_status", "submitted") if isinstance(response, dict) else "submitted"
-        return Order(signal.ticker, "BUY" if signal.action in {"BUY", "HOLD"} else "SELL", signal.quantity, signal.close, "live-groww", status, broker_order_id=broker_order_id)
+        return Order(signal.ticker, side, signal.quantity, signal.close, "live-groww", status, broker_order_id=broker_order_id)
 
 
 class AutoTrader:

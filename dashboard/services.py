@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dashboard.quant_engine import (
+    GROWW_RATE_LIMITS,
     INDIAN_DEFAULT_UNIVERSE,
     IndianEquityMomentumModel,
     ProfitProtectionConfig,
@@ -45,5 +46,14 @@ def run_backtest(
         "backtest": backtest,
         "profit_gate": protection,
         "signals": [signal.__dict__ for signal in signals],
+        "groww": {
+            "rate_limits": GROWW_RATE_LIMITS,
+            "auth_options": [
+                "GROWW_ACCESS_TOKEN for an already generated access token",
+                "GROWW_API_KEY + GROWW_API_SECRET for Groww's daily approval API key/secret flow",
+                "GROWW_TOTP_TOKEN + GROWW_TOTP_SECRET for Groww's TOTP flow via pyotp",
+            ],
+            "live_command": "python quant_model.py --universe RELIANCE.NS,TCS.NS --live --broker groww",
+        },
         "disclaimer": "Research and automation scaffold only; profits are not guaranteed. Groww/Zerodha live trading requires explicit CLI opt-in, credentials, and broker/SEBI compliance.",
     }

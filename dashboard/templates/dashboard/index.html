@@ -93,13 +93,33 @@
                     <div class="card-body">
                         <ul>
                             <li>Paper trading: <code>python quant_model.py --paper</code></li>
-                            <li>Groww live trading: set <code>GROWW_ACCESS_TOKEN</code> or <code>GROWW_API_KEY</code>/<code>GROWW_API_SECRET</code>, then run <code>python quant_model.py --live --broker groww</code>.</li>
+                            <li>Groww live trading: set <code>GROWW_ACCESS_TOKEN</code>, <code>GROWW_API_KEY</code>/<code>GROWW_API_SECRET</code>, or <code>GROWW_TOTP_TOKEN</code>/<code>GROWW_TOTP_SECRET</code>, then run <code>{{ results.groww.live_command }}</code>.</li>
                             <li>Live trading is blocked unless the profit-protection gate passes; this reduces risk but cannot guarantee profit.</li>
                             <li>Risk caps: max 5 positions, 1% capital risk per trade, 20% max position size.</li>
                             <li>Costs include brokerage and slippage assumptions.</li>
                         </ul>
                     </div>
                 </div>
+                <div class="card">
+                    <div class="card-header bg-success text-white">Groww API Setup & Limits</div>
+                    <div class="card-body">
+                        <p class="mb-2">Official Groww Trading API prerequisites: Groww account, Python 3.9+, active Trading API subscription, and <code>growwapi</code>/<code>pyotp</code> installed.</p>
+                        <div class="small text-uppercase fw-bold muted">Authentication options</div>
+                        <ul>
+                            {% for option in results.groww.auth_options %}
+                                <li>{{ option }}</li>
+                            {% endfor %}
+                        </ul>
+                        <div class="small text-uppercase fw-bold muted">Shared rate limits</div>
+                        <ul class="mb-0">
+                            <li>Orders: {{ results.groww.rate_limits.orders.per_second }}/sec, {{ results.groww.rate_limits.orders.per_minute }}/min.</li>
+                            <li>Live data: {{ results.groww.rate_limits.live_data.per_second }}/sec, {{ results.groww.rate_limits.live_data.per_minute }}/min.</li>
+                            <li>Non-trading: {{ results.groww.rate_limits.non_trading.per_second }}/sec, {{ results.groww.rate_limits.non_trading.per_minute }}/min.</li>
+                            <li>Live feed: up to {{ results.groww.rate_limits.live_feed.subscriptions }} subscriptions.</li>
+                        </ul>
+                    </div>
+                </div>
+
                 <div class="card">
                     <div class="card-header bg-primary text-white">Recent Equity Curve</div>
                     <div class="card-body p-0">
